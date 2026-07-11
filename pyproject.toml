@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "frida-mcp"
+version = "1.0.0"
+description = "Model Context Protocol (MCP) server for Frida - Game Guardian Memory Editor & Scripter"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+dependencies = [
+    "frida>=16.0.0",
+    "mcp>=1.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "mypy",
+]
+lua = [
+    "lupa>=1.14.1",
+]
+
+[project.scripts]
+frida-mcp = "frida_mcp.server:main"
+
+[tool.black]
+line-length = 88
+target-version = ["py38"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["frida_mcp"]
+include = [
+    "frida_mcp/*.py",
+    "frida_mcp/agent/agent.js",
+    "README.md",
+    "LICENSE",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "frida_mcp/*.py",
+    "frida_mcp/agent/agent.js",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml"
+]
