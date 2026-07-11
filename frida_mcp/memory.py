@@ -278,3 +278,38 @@ def quick_freeze_addresses(session_id: str, freeze_list: List[Dict[str, str]]) -
                 results[addr] = f"error: {str(e)}"
     return {"status": "success", "results": results}
 
+def find_translated_library(session_id: str, library_name: str) -> Dict[str, Any]:
+    """Scans for Houdini/translated ARM library base address in anonymous maps."""
+    rpc = get_session_rpc(session_id)
+    # Re-route request to scan anonymous memory regions on process
+    try:
+        # Search the biggest r-x anonymous segments
+        js_code = """
+        (function() {
+            var maps = Process.enumerateRanges({protection: 'r-x', coalesce: true});
+            var candidates = maps.filter(function(m) { return !m.file && m.size > 20*1024*1024; });
+            if (candidates.length > 0) {
+                return candidates[0].base.toString() + "," + candidates[0].size.toString();
+            }
+            return "not_found";
+        })()
+        """
+        res = rpc.execute_script_js(js_code)
+        if res.get("status") == "success" and res.get("result") != "not_found":
+            parts = res.get("result").split(",")
+            return {"status": "success", "base_address": parts[0], "size": int(parts[1]), "type": "translated_arm"}
+        return {"status": "error", "message": "Could not locate translated ARM module base address."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+def dump_metadata_file(session_id: str, output_path: str) -> Dict[str, Any]:
+    """Dump global-metadata.dat from application internal cache directory."""
+    import subprocess
+    adb_cmd = ["C:\\Program Files\\BlueStacks_nxt\\HD-Adb.exe", "pull", "/data/data/com.dts.freefireth/files/il2cpp/Metadata/global-metadata.dat", output_path]
+    try:
+        res = subprocess.run(adb_cmd, capture_output=True, text=True, check=True)
+        return {"status": "success", "message": f"Successfully pulled global-metadata.dat to {output_path}", "output": res.stdout}
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to pull metadata file: {str(e)}"}
+
+

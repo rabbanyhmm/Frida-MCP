@@ -111,6 +111,9 @@ Add the following to your configuration file (Windows: `%APPDATA%\Claude\claude_
 - `mem_freeze` / `mem_unfreeze`: Lock/unlock variables at specific addresses.
 - `mem_patch_code`: Patch binary opcodes at runtime.
 - `mem_dump_range`: Extract raw memory ranges as bytes.
+- `mem_find_translated_library`: Locate base address of translated ARM libraries in memory maps (such as Houdini translation environments).
+- `mem_dump_metadata`: Pull decrypted global-metadata.dat directly from target app cache directories to host path.
+
 
 ### Quick Operations (Token Reduction)
 - `mem_quick_search_and_edit`: Search for a value and edit all occurrences in a single invocation.

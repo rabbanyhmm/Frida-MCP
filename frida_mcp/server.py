@@ -385,6 +385,31 @@ def mem_quick_freeze_list(
         return {"status": "error", "error": str(e)}
 
 
+@mcp.tool()
+def mem_find_translated_library(
+    session_id: str = Field(description="Active session ID."),
+    library_name: str = Field(description="Name of the library/module (e.g. 'libil2cpp.so').")
+) -> Dict[str, Any]:
+    """Identify the virtual memory base address of translated ARM libraries in memory maps (such as Houdini translation environments)."""
+    try:
+        return memory.find_translated_library(session_id, library_name)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_dump_metadata(
+    session_id: str = Field(description="Active session ID."),
+    output_path: str = Field(description="Host path to copy global-metadata.dat output file (e.g., 'C:\\Users\\mdrab\\Desktop\\global-metadata.dat').")
+) -> Dict[str, Any]:
+    """Pull decrypted global-metadata.dat directly from target application cache directories onto the host file system."""
+    try:
+        return memory.dump_metadata_file(session_id, output_path)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+
 
 # Resources
 @mcp.resource("frida://version")
