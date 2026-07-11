@@ -282,50 +282,6 @@ def mem_dump_range(
         return {"status": "error", "error": str(e)}
 
 
-@mcp.tool()
-def mem_resolve_module(
-    session_id: str = Field(description="Active session ID."),
-    module_name: str = Field(description="Name of the module/library to resolve (e.g., 'libil2cpp.so').")
-) -> Dict[str, Any]:
-    """Resolve the base address, size, and absolute path of a loaded module."""
-    try:
-        res = memory.resolve_module(session_id, module_name)
-        return res
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-@mcp.tool()
-def mem_read_pointer_chain(
-    session_id: str = Field(description="Active session ID."),
-    base_address: str = Field(description="Hex base pointer address (e.g., '0x7ff7a100')."),
-    offsets: List[int] = Field(description="List of integer offsets to walk recursively."),
-    val_type: str = Field(default="dword", description="Value type to read at the end: 'byte', 'word', 'dword', 'qword', 'float', 'double'.")
-) -> Dict[str, Any]:
-    """Read a memory value by recursively walking a pointer chain with offsets."""
-    try:
-        res = memory.read_pointer_chain(session_id, base_address, offsets, val_type)
-        return res
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-@mcp.tool()
-def mem_patch_return(
-    session_id: str = Field(description="Active session ID."),
-    address: str = Field(description="Hex function entry point address to hook."),
-    return_type: str = Field(description="Return type of the function: 'bool', 'int', 'dword'."),
-    value: str = Field(description="Value to force return (e.g., 'true', 'false', '1337').")
-) -> Dict[str, Any]:
-    """Hook a function entry point and force it to return a specific value (bool, int, dword) on exit."""
-    try:
-        res = memory.patch_return(session_id, address, return_type, value)
-        return res
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-
 # Host Saved List Database management tools
 @mcp.tool()
 def saved_list_load() -> Dict[str, Any]:
@@ -387,6 +343,47 @@ def execute_lua_script(
         return memory.run_lua_script(session_id, script_code)
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
+
+# Quick Optimized Tools for Token Reduction
+@mcp.tool()
+def mem_quick_search_and_edit(
+    pid: int = Field(description="Target Process ID (PID)."),
+    search_val: str = Field(description="Value to search for."),
+    val_type: str = Field(description="Value data type."),
+    write_val: str = Field(description="New value to write to matching results."),
+    device_id: Optional[str] = Field(default=None, description="Optional Device ID.")
+) -> Dict[str, Any]:
+    """Search and replace all matches in a target process in a single invocation to save AI tokens."""
+    try:
+        return memory.quick_search_and_edit(pid, search_val, val_type, write_val, device_id)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_quick_patch_offsets(
+    session_id: str = Field(description="Active session ID."),
+    patches: List[Dict[str, str]] = Field(description="List of patch objects, each containing 'address' and 'instruction' (e.g. 'nop' or hex string).")
+) -> Dict[str, Any]:
+    """Apply multiple binary code/instruction patches simultaneously in a single call to save AI tokens."""
+    try:
+        return memory.quick_patch_addresses(session_id, patches)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_quick_freeze_list(
+    session_id: str = Field(description="Active session ID."),
+    freeze_list: List[Dict[str, str]] = Field(description="List of items to freeze, each containing 'address', 'value', and optional 'type'.")
+) -> Dict[str, Any]:
+    """Freeze multiple memory addresses simultaneously in a single call to save AI tokens."""
+    try:
+        return memory.quick_freeze_addresses(session_id, freeze_list)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 
 
 # Resources

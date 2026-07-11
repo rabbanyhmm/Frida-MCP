@@ -112,6 +112,12 @@ Add the following to your configuration file (Windows: `%APPDATA%\Claude\claude_
 - `mem_patch_code`: Patch binary opcodes at runtime.
 - `mem_dump_range`: Extract raw memory ranges as bytes.
 
+### Quick Operations (Token Reduction)
+- `mem_quick_search_and_edit`: Search for a value and edit all occurrences in a single invocation.
+- `mem_quick_patch_offsets`: Apply multiple binary instruction patches simultaneously in a single call.
+- `mem_quick_freeze_list`: Freeze a list of multiple memory addresses in a single call.
+
+
 ### Persistent Offsets (Saved List)
 - `saved_list_load`: Load saved offset database.
 - `saved_list_add`: Save name, address, and type to local persistent config.

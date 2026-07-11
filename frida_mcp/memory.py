@@ -235,20 +235,46 @@ def run_lua_script(session_id: str, lua_code: str) -> Dict[str, Any]:
             "message": f"Lua runtime exception: {str(e)}"
         }
 
-def resolve_module(session_id: str, module_name: str) -> Dict[str, Any]:
-    """Get the base address and size of a module relative to session."""
-    rpc = get_session_rpc(session_id)
-    return rpc.resolve_module(module_name)
+def quick_search_and_edit(pid: int, search_val: str, val_type: str, write_val: str, device_id: Optional[str] = None) -> Dict[str, Any]:
+    """Search for a value and replace all occurrences in a single quick operation to reduce AI tokens."""
+    session_id = create_memory_session(pid, device_id)
+    try:
+        matches = search_memory(session_id, search_val, val_type)
+        if matches > 0:
+            updated = write_all_candidates(session_id, write_val)
+            return {"status": "success", "matches_found": matches, "updated_count": updated}
+        return {"status": "success", "matches_found": 0, "updated_count": 0}
+    finally:
+        close_memory_session(session_id)
 
-def read_pointer_chain(session_id: str, base_address: str, offsets: List[int], val_type: str = "dword") -> Dict[str, Any]:
-    """Read a value at the end of a pointer chain starting from a base address."""
+def quick_patch_addresses(session_id: str, patches: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Patch multiple code addresses (OPCODEs/hex) in a single call to save AI tokens."""
     rpc = get_session_rpc(session_id)
-    # Convert list of offsets to string equivalents for JS arrays
-    offset_strs = [str(o) for o in offsets]
-    return rpc.read_pointer_chain(base_address, offset_strs, val_type)
+    results = {}
+    for patch in patches:
+        addr = patch.get("address")
+        inst = patch.get("instruction")
+        if addr and inst:
+            try:
+                success = rpc.patch_opcode(addr, inst)
+                results[addr] = "patched" if success else "failed"
+            except Exception as e:
+                results[addr] = f"error: {str(e)}"
+    return {"status": "success", "results": results}
 
-def patch_return(session_id: str, address: str, return_type: str, value: str) -> Dict[str, Any]:
-    """Hook a function and force it to return a specific value (bool, int, dword)."""
+def quick_freeze_addresses(session_id: str, freeze_list: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Freeze multiple memory addresses simultaneously in a single call to save AI tokens."""
     rpc = get_session_rpc(session_id)
-    return rpc.patch_return(address, return_type, value)
+    results = {}
+    for item in freeze_list:
+        addr = item.get("address")
+        val = item.get("value")
+        t = item.get("type", "dword")
+        if addr and val:
+            try:
+                success = rpc.freeze_value(addr, str(val), t)
+                results[addr] = "frozen" if success else "failed"
+            except Exception as e:
+                results[addr] = f"error: {str(e)}"
+    return {"status": "success", "results": results}
 
