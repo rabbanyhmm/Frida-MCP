@@ -9,11 +9,22 @@ def get_target_device(device_id: Optional[str] = None) -> frida.core.Device:
         try:
             return frida.get_device(device_id)
         except frida.InvalidArgumentError:
+            # Check if matching socket connection
+            if ":" in device_id:
+                try:
+                    return frida.get_device_manager().add_remote_device(device_id)
+                except Exception:
+                    pass
             raise ValueError(f"Frida device '{device_id}' not found.")
     try:
         return frida.get_usb_device()
     except frida.InvalidArgumentError:
-        raise ValueError("No USB device connected or detected.")
+        # Fallback to local emulator TCP bridge (port 27042 forwarded)
+        try:
+            return frida.get_device_manager().add_remote_device("127.0.0.1:27042")
+        except Exception:
+            raise ValueError("No USB device connected, and local socket fallback failed. Ensure frida-server is running.")
+
 
 def enumerate_devices() -> List[Dict[str, Any]]:
     """List all available devices connected to the system."""

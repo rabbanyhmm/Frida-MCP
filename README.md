@@ -100,6 +100,7 @@ Add the following to your configuration file (Windows: `%APPDATA%\Claude\claude_
 
 ### Memory & Search
 - `open_session`: Attach to a process and inject the instrumentation engine.
+- `list_sessions`: View all open memory sessions (browser tab manager).
 - `close_session`: Detach and clean up.
 - `mem_search`: Initial memory scan by type.
 - `mem_refine`: Filter scan list by value changes.

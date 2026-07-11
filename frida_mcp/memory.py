@@ -58,6 +58,12 @@ def close_memory_session(session_id: str) -> None:
         except Exception:
             pass
         del _sessions[session_id]
+def get_active_sessions() -> List[Dict[str, Any]]:
+    """List all open memory sessions (browser tabs equivalent)."""
+    return [
+        {"session_id": sid, "pid": int(sid.split("_")[1]) if len(sid.split("_")) > 1 else 0}
+        for sid in _sessions.keys()
+    ]
 
 def get_session_rpc(session_id: str):
     """Retrieve the RPC endpoints of the loaded agent."""

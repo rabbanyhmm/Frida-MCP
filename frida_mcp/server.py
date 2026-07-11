@@ -95,6 +95,16 @@ def open_session(
 
 
 @mcp.tool()
+def list_sessions() -> Dict[str, Any]:
+    """List all active, open memory instrumentation sessions (like browser tabs)."""
+    try:
+        active = memory.get_active_sessions()
+        return {"status": "success", "sessions": active}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
 def close_session(
     session_id: str = Field(description="Active session ID to close.")
 ) -> Dict[str, Any]:
