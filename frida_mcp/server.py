@@ -282,6 +282,50 @@ def mem_dump_range(
         return {"status": "error", "error": str(e)}
 
 
+@mcp.tool()
+def mem_resolve_module(
+    session_id: str = Field(description="Active session ID."),
+    module_name: str = Field(description="Name of the module/library to resolve (e.g., 'libil2cpp.so').")
+) -> Dict[str, Any]:
+    """Resolve the base address, size, and absolute path of a loaded module."""
+    try:
+        res = memory.resolve_module(session_id, module_name)
+        return res
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_read_pointer_chain(
+    session_id: str = Field(description="Active session ID."),
+    base_address: str = Field(description="Hex base pointer address (e.g., '0x7ff7a100')."),
+    offsets: List[int] = Field(description="List of integer offsets to walk recursively."),
+    val_type: str = Field(default="dword", description="Value type to read at the end: 'byte', 'word', 'dword', 'qword', 'float', 'double'.")
+) -> Dict[str, Any]:
+    """Read a memory value by recursively walking a pointer chain with offsets."""
+    try:
+        res = memory.read_pointer_chain(session_id, base_address, offsets, val_type)
+        return res
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_patch_return(
+    session_id: str = Field(description="Active session ID."),
+    address: str = Field(description="Hex function entry point address to hook."),
+    return_type: str = Field(description="Return type of the function: 'bool', 'int', 'dword'."),
+    value: str = Field(description="Value to force return (e.g., 'true', 'false', '1337').")
+) -> Dict[str, Any]:
+    """Hook a function entry point and force it to return a specific value (bool, int, dword) on exit."""
+    try:
+        res = memory.patch_return(session_id, address, return_type, value)
+        return res
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+
 # Host Saved List Database management tools
 @mcp.tool()
 def saved_list_load() -> Dict[str, Any]:

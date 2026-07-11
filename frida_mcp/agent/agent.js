@@ -530,5 +530,54 @@ rpc.exports = {
                 stack: e.stack
             };
         }
+    },
+
+    resolveModule: function(moduleName) {
+        try {
+            var m = Process.findModuleByName(moduleName);
+            if (m) {
+                return {
+                    status: "success",
+                    name: m.name,
+                    base: m.base.toString(),
+                    size: m.size,
+                    path: m.path
+                };
+            }
+            return { status: "error", message: "Module not found" };
+        } catch (e) {
+            return { status: "error", message: e.toString() };
+        }
+    },
+
+    readPointerChain: function(baseAddrStr, offsets, valType) {
+        try {
+            var current = ptr(baseAddrStr);
+            for (var i = 0; i < offsets.length; i++) {
+                current = current.readPointer().add(parseInt(offsets[i], 10));
+            }
+            var val = readAddress(current.toString(), valType || "dword");
+            return { status: "success", address: current.toString(), value: val };
+        } catch (e) {
+            return { status: "error", message: e.toString() };
+        }
+    },
+
+    patchReturn: function(addressStr, returnType, valueStr) {
+        try {
+            var target = ptr(addressStr);
+            Interceptor.attach(target, {
+                onLeave: function(retval) {
+                    if (returnType === "bool" || returnType === "boolean") {
+                        retval.replace(valueStr === "true" || valueStr === "1" ? ptr(1) : ptr(0));
+                    } else if (returnType === "int" || returnType === "dword") {
+                        retval.replace(ptr(parseInt(valueStr, 10)));
+                    }
+                }
+            });
+            return { status: "success", message: "Hook return successfully attached to address " + addressStr };
+        } catch (e) {
+            return { status: "error", message: e.toString() };
+        }
     }
 };

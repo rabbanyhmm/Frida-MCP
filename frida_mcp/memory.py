@@ -234,3 +234,21 @@ def run_lua_script(session_id: str, lua_code: str) -> Dict[str, Any]:
             "status": "error",
             "message": f"Lua runtime exception: {str(e)}"
         }
+
+def resolve_module(session_id: str, module_name: str) -> Dict[str, Any]:
+    """Get the base address and size of a module relative to session."""
+    rpc = get_session_rpc(session_id)
+    return rpc.resolve_module(module_name)
+
+def read_pointer_chain(session_id: str, base_address: str, offsets: List[int], val_type: str = "dword") -> Dict[str, Any]:
+    """Read a value at the end of a pointer chain starting from a base address."""
+    rpc = get_session_rpc(session_id)
+    # Convert list of offsets to string equivalents for JS arrays
+    offset_strs = [str(o) for o in offsets]
+    return rpc.read_pointer_chain(base_address, offset_strs, val_type)
+
+def patch_return(session_id: str, address: str, return_type: str, value: str) -> Dict[str, Any]:
+    """Hook a function and force it to return a specific value (bool, int, dword)."""
+    rpc = get_session_rpc(session_id)
+    return rpc.patch_return(address, return_type, value)
+
