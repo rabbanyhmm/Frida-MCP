@@ -811,6 +811,59 @@ def mem_call_native_function(
 
 
 @mcp.tool()
+def mem_create_native_function(
+    session_id: str = Field(description="Active session ID."),
+    func_id: str = Field(description="A unique string ID to identify this function later."),
+    address: str = Field(description="Hex memory address of the native function."),
+    return_type: str = Field(description="Return type (e.g., 'void', 'pointer', 'int', 'float')."),
+    arg_types: List[str] = Field(description="List of argument types (e.g., ['int', 'pointer']).")
+) -> Dict[str, Any]:
+    """Cache a NativeFunction by an ID to be invoked multiple times without re-parsing signatures."""
+    try:
+        return memory.create_native_function(session_id, func_id, address, return_type, arg_types)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_invoke_native_function(
+    session_id: str = Field(description="Active session ID."),
+    func_id: str = Field(description="The unique string ID of the previously created NativeFunction."),
+    args_list: List[Any] = Field(description="List of argument values.")
+) -> Dict[str, Any]:
+    """Invoke a previously registered NativeFunction using its ID."""
+    try:
+        return memory.invoke_native_function(session_id, func_id, args_list)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_create_native_callback(
+    session_id: str = Field(description="Active session ID."),
+    cb_id: str = Field(description="A unique string ID to identify this callback in the hook logs."),
+    return_type: str = Field(description="Return type of the callback (e.g., 'void', 'pointer', 'int')."),
+    arg_types: List[str] = Field(description="List of argument types.")
+) -> Dict[str, Any]:
+    """Create a NativeCallback at runtime that logs its arguments to hook logs when invoked by the target app. Returns the memory address pointer to the callback."""
+    try:
+        return memory.create_native_callback(session_id, cb_id, return_type, arg_types)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_hook_register_natives(
+    session_id: str = Field(description="Active session ID.")
+) -> Dict[str, Any]:
+    """Hook Android's JNIEnv->RegisterNatives to dynamically dump native JNI methods (names, signatures, pointers) as they are registered."""
+    try:
+        return memory.hook_register_natives(session_id)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
 def mem_invoke_exported_function(
     session_id: str = Field(description="Active session ID."),
     module_name: str = Field(description="Name of the module containing the export."),

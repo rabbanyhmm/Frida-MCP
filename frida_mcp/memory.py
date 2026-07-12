@@ -301,6 +301,26 @@ def call_native_function(session_id: str, address: str, return_type: str, arg_ty
     rpc = get_session_rpc(session_id)
     return rpc.call_native_function(address, return_type, arg_types, args_list)
 
+def create_native_function(session_id: str, func_id: str, address: str, return_type: str, arg_types: List[str]) -> Dict[str, Any]:
+    """Register a NativeFunction to be invoked later by its ID."""
+    rpc = get_session_rpc(session_id)
+    return rpc.create_native_function(func_id, address, return_type, arg_types)
+
+def invoke_native_function(session_id: str, func_id: str, args_list: List[Any]) -> Dict[str, Any]:
+    """Invoke a previously registered NativeFunction."""
+    rpc = get_session_rpc(session_id)
+    return rpc.invoke_native_function(func_id, args_list)
+
+def create_native_callback(session_id: str, cb_id: str, return_type: str, arg_types: List[str]) -> Dict[str, Any]:
+    """Create a NativeCallback that logs to hook events when invoked."""
+    rpc = get_session_rpc(session_id)
+    return rpc.create_native_callback(cb_id, return_type, arg_types)
+
+def hook_register_natives(session_id: str) -> Dict[str, Any]:
+    """Hook JNIEnv->RegisterNatives to dump JNI methods being registered."""
+    rpc = get_session_rpc(session_id)
+    return rpc.hook_register_natives()
+
 def invoke_exported_function(session_id: str, module_name: str, export_name: str, return_type: str, arg_types: List[str], args_list: List[Any]) -> Dict[str, Any]:
     """Invoke an exported function dynamically."""
     rpc = get_session_rpc(session_id)

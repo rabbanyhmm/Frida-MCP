@@ -8,6 +8,8 @@ var frozenAddresses = {};
 var freezeIntervalId = null;
 var hookLogs = [];          // Hook event queue
 var installedHooks = {};    // Address -> Interceptor listener
+var cachedNativeFunctions = {}; // ID -> NativeFunction
+var cachedNativeCallbacks = {}; // ID -> NativeCallback
 
 // Convert integer to hex string helper
 function u32ToHex(val) {
@@ -953,6 +955,111 @@ rpc.exports = {
             }
             return { status: "success", result: result };
         } catch (e) {
+            return { status: "error", error: e.toString() };
+        }
+    },
+
+    createNativeFunction: function(id, addressStr, returnType, argTypes) {
+        try {
+            var fPtr = ptr(addressStr);
+            var f = new NativeFunction(fPtr, returnType, argTypes);
+            cachedNativeFunctions[id] = f;
+            return { status: "success", id: id };
+        } catch (e) {
+            return { status: "error", error: e.toString() };
+        }
+    },
+
+    invokeNativeFunction: function(id, argsList) {
+        try {
+            if (!cachedNativeFunctions[id]) {
+                return { status: "error", error: "NativeFunction ID not found" };
+            }
+            var f = cachedNativeFunctions[id];
+            var result = f.apply(null, argsList);
+            if (result !== null && result !== undefined && typeof result.toString === 'function') {
+                result = result.toString();
+            }
+            return { status: "success", result: result };
+        } catch (e) {
+            return { status: "error", error: e.toString() };
+        }
+    },
+
+    createNativeCallback: function(id, returnType, argTypes) {
+        try {
+            var cb = new NativeCallback(function() {
+                var args = Array.prototype.slice.call(arguments);
+                var argsStr = args.map(function(a) { 
+                    return (a !== null && a !== undefined && typeof a.toString === 'function') ? a.toString() : String(a); 
+                });
+                
+                if (hookLogs.length < 500) {
+                    hookLogs.push({
+                        type: "native_callback",
+                        id: id,
+                        args: argsStr
+                    });
+                }
+                
+                // Return a dummy value based on type to prevent crashes
+                if (returnType === "void") return;
+                if (returnType === "pointer") return ptr(0);
+                return 0;
+            }, returnType, argTypes);
+            
+            cachedNativeCallbacks[id] = cb;
+            return { status: "success", id: id, address: cb.toString() };
+        } catch (e) {
+            return { status: "error", error: e.toString() };
+        }
+    },
+
+    hookRegisterNatives: function() {
+        try {
+            var count = 0;
+            var symbols = Process.findModuleByName("libart.so") || Process.findModuleByName("libdvm.so");
+            if (!symbols) return { status: "error", error: "libart.so not found (Not Android?)" };
+
+            var regNative = null;
+            symbols.enumerateSymbols().forEach(function(sym) {
+                if (sym.name.indexOf("CheckJNI") === -1 && sym.name.indexOf("RegisterNatives") !== -1) {
+                    regNative = sym.address;
+                }
+            });
+
+            if (regNative) {
+                Interceptor.attach(regNative, {
+                    onEnter: function(args) {
+                        var env = args[0];
+                        var clazz = args[1];
+                        var methods = args[2];
+                        var nMethods = args[3].toInt32();
+
+                        for (var i = 0; i < nMethods; i++) {
+                            var structSize = Process.pointerSize * 3;
+                            var namePtr = Memory.readPointer(methods.add(i * structSize));
+                            var sigPtr = Memory.readPointer(methods.add(i * structSize + Process.pointerSize));
+                            var fnPtr = Memory.readPointer(methods.add(i * structSize + (Process.pointerSize * 2)));
+                            
+                            var methodName = namePtr.isNull() ? "null" : Memory.readUtf8String(namePtr);
+                            var methodSig = sigPtr.isNull() ? "null" : Memory.readUtf8String(sigPtr);
+
+                            if (hookLogs.length < 500) {
+                                hookLogs.push({
+                                    type: "jni_register_native",
+                                    name: methodName,
+                                    signature: methodSig,
+                                    address: fnPtr.toString()
+                                });
+                            }
+                        }
+                    }
+                });
+                count = 1;
+            }
+            return { status: "success", hooked: count };
+        } catch(e) {
             return { status: "error", error: e.toString() };
         }
     },

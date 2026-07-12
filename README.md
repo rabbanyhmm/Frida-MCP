@@ -28,7 +28,9 @@ Frida MCP operates out-of-process via an RPC bridge to an injected V8 JavaScript
 - **Mass API Hooking**: Automatically hook all exports or imports of an entire module simultaneously to instantly profile application behavior.
 
 ### 4. Advanced Automation & Scripting
-- **Native Execution**: Invoke dynamically exported APIs or arbitrary function addresses (`callNativeFunction`).
+- **Native Execution**: Cache and invoke dynamically exported APIs or arbitrary function addresses (`callNativeFunction`, `createNativeFunction`).
+- **Native Callbacks**: Generate runtime native function pointers from JavaScript to intercept calls from the target application back into the agent.
+- **JNI Tracing**: Dynamically enumerate and trace JNI method registrations (`RegisterNatives`) to intercept Android Java-to-Native crossings.
 - **Target File Access**: Directly pull or push files via ADB integration, and extract DEX files right out of memory.
 - **Embedded Script Runner**: Embeds a JavaScript script runner and a bridged Lua VM for executing legacy Game Guardian scripts (`gg` namespace).
 - **Session Hot-Reloading**: Seamlessly swap and inject updated instrumentation scripts on-the-fly without restarting the process.
