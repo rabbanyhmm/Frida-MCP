@@ -75,6 +75,29 @@ def create_memory_session(pid: int, device_id: Optional[str] = None) -> str:
     return session_id
 
 
+def reload_script(session_id: str) -> Dict[str, Any]:
+    """Hot-reload the agent.js script for an active session without detaching."""
+    if session_id not in _sessions:
+        raise ValueError("Invalid or inactive session_id")
+    
+    session = _sessions[session_id]
+    
+    # Unload old script
+    if session_id in _scripts:
+        try:
+            _scripts[session_id].unload()
+        except Exception:
+            pass
+            
+    # Load new script
+    agent_code = get_agent_code()
+    script = session.create_script(agent_code)
+    script.load()
+    
+    _scripts[session_id] = script
+    return {"status": "success", "message": "Agent script hot-reloaded successfully"}
+
+
 def check_session(session_id: str) -> Dict[str, Any]:
     """Returns health status of a session — alive, detached, or unknown."""
     status = _session_status.get(session_id)
@@ -262,6 +285,31 @@ def hook_module_imports(session_id: str, module_name: str) -> Dict[str, Any]:
     """Hook all imports in a module to log when they are called."""
     rpc = get_session_rpc(session_id)
     return rpc.hook_module_imports(module_name)
+
+def enumerate_threads(session_id: str) -> List[Dict[str, Any]]:
+    """Enumerate all active threads in the process."""
+    rpc = get_session_rpc(session_id)
+    return rpc.enumerate_threads()
+
+def backtrace_thread(session_id: str, thread_id: int) -> Dict[str, Any]:
+    """Get backtrace for a specific thread."""
+    rpc = get_session_rpc(session_id)
+    return rpc.backtrace_thread(thread_id)
+
+def call_native_function(session_id: str, address: str, return_type: str, arg_types: List[str], args_list: List[Any]) -> Dict[str, Any]:
+    """Call a native function dynamically."""
+    rpc = get_session_rpc(session_id)
+    return rpc.call_native_function(address, return_type, arg_types, args_list)
+
+def invoke_exported_function(session_id: str, module_name: str, export_name: str, return_type: str, arg_types: List[str], args_list: List[Any]) -> Dict[str, Any]:
+    """Invoke an exported function dynamically."""
+    rpc = get_session_rpc(session_id)
+    return rpc.invoke_exported_function(module_name, export_name, return_type, arg_types, args_list)
+
+def dump_dex(session_id: str) -> Dict[str, Any]:
+    """Scan memory and return list of DEX file headers found."""
+    rpc = get_session_rpc(session_id)
+    return rpc.dump_dex()
 
 def patch_opcode_instruction(session_id: str, address: str, instruction: str) -> bool:
     """Patch machine code/opcodes at target memory address."""

@@ -106,6 +106,30 @@ def terminate_process(
         return {"success": False, "error": str(e)}
 
 
+@mcp.tool()
+def dev_pull_file(
+    remote_path: str = Field(description="Absolute path to the file on the remote device."),
+    local_path: str = Field(description="Absolute path to save the file on the host machine.")
+) -> Dict[str, Any]:
+    """Pull/download a file from the target device to the host."""
+    try:
+        return device.pull_file(remote_path, local_path)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def dev_push_file(
+    local_path: str = Field(description="Absolute path to the file on the host machine."),
+    remote_path: str = Field(description="Absolute path to save the file on the remote device.")
+) -> Dict[str, Any]:
+    """Push/upload a file from the host machine to the target device."""
+    try:
+        return device.push_file(local_path, remote_path)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 # Memory Hacking / Game Guardian Tools
 @mcp.tool()
 def open_session(
@@ -154,6 +178,17 @@ def check_session_status(
     """Check the health status of an active session to verify if it is still connected or if the target process crashed."""
     try:
         return memory.check_session(session_id)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def reload_session_script(
+    session_id: str = Field(description="Active session ID to reload.")
+) -> Dict[str, Any]:
+    """Hot-reload the instrumentation agent script without detaching from the target process."""
+    try:
+        return memory.reload_script(session_id)
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -573,6 +608,17 @@ def mem_get_symbols(
 
 
 @mcp.tool()
+def mem_dump_dex(
+    session_id: str = Field(description="Active session ID.")
+) -> Dict[str, Any]:
+    """Scan process memory for DEX file magic headers and dump their addresses and sizes."""
+    try:
+        return memory.dump_dex(session_id)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
 def mem_va_to_rva(
     session_id: str = Field(description="Active session ID."),
     module_name: str = Field(description="Name of the module."),
@@ -721,6 +767,61 @@ def mem_hook_imports(
     """Hook all imported functions in a module to log when they are called."""
     try:
         return memory.hook_module_imports(session_id, module_name)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_enumerate_threads(
+    session_id: str = Field(description="Active session ID.")
+) -> Dict[str, Any]:
+    """Enumerate all active threads in the process, retrieving their IDs, execution state, and CPU register contexts."""
+    try:
+        threads = memory.enumerate_threads(session_id)
+        return {"status": "success", "threads": threads}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_backtrace_thread(
+    session_id: str = Field(description="Active session ID."),
+    thread_id: int = Field(description="Thread ID to backtrace.")
+) -> Dict[str, Any]:
+    """Retrieve an accurate execution stack backtrace for a specific thread, resolving addresses to function symbols if available."""
+    try:
+        return memory.backtrace_thread(session_id, thread_id)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_call_native_function(
+    session_id: str = Field(description="Active session ID."),
+    address: str = Field(description="Hex memory address of the native function."),
+    return_type: str = Field(description="Return type (e.g., 'void', 'pointer', 'int', 'float')."),
+    arg_types: List[str] = Field(description="List of argument types (e.g., ['int', 'pointer'])."),
+    args_list: List[Any] = Field(description="List of argument values matching arg_types.")
+) -> Dict[str, Any]:
+    """Dynamically call a native function at a specific memory address."""
+    try:
+        return memory.call_native_function(session_id, address, return_type, arg_types, args_list)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_invoke_exported_function(
+    session_id: str = Field(description="Active session ID."),
+    module_name: str = Field(description="Name of the module containing the export."),
+    export_name: str = Field(description="Name of the exported function to call."),
+    return_type: str = Field(description="Return type (e.g., 'void', 'pointer', 'int')."),
+    arg_types: List[str] = Field(description="List of argument types."),
+    args_list: List[Any] = Field(description="List of argument values.")
+) -> Dict[str, Any]:
+    """Dynamically lookup and invoke an exported function from a loaded module."""
+    try:
+        return memory.invoke_exported_function(session_id, module_name, export_name, return_type, arg_types, args_list)
     except Exception as e:
         return {"status": "error", "error": str(e)}
 

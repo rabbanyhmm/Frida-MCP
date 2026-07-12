@@ -873,16 +873,122 @@ rpc.exports = {
         return { status: "success", hooked: count };
     },
 
+    enumerateThreads: function() {
+        return Process.enumerateThreads().map(function(t) {
+            return {
+                id: t.id,
+                state: t.state,
+                context: t.context
+            };
+        });
+    },
+
+    backtraceThread: function(threadId) {
+        try {
+            var threads = Process.enumerateThreads();
+            var targetThread = null;
+            for (var i = 0; i < threads.length; i++) {
+                if (threads[i].id === threadId) {
+                    targetThread = threads[i];
+                    break;
+                }
+            }
+
+            if (!targetThread) return { status: "error", error: "Thread not found" };
+
+            // For accurate backtracing we need the context, but Frida's Thread.backtrace
+            // is best used inside an interceptor. If we have the context, we can try to walk it.
+            var bt = Thread.backtrace(targetThread.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress);
+            
+            var traces = bt.map(function(sym) {
+                return {
+                    address: sym.address.toString(),
+                    name: sym.name,
+                    moduleName: sym.moduleName,
+                    fileName: sym.fileName,
+                    lineNumber: sym.lineNumber
+                };
+            });
+
+            return { status: "success", traces: traces };
+        } catch (e) {
+            return { status: "error", error: e.toString() };
+        }
+    },
+
+    callNativeFunction: function(addressStr, returnType, argTypes, argsList) {
+        try {
+            var fPtr = ptr(addressStr);
+            var f = new NativeFunction(fPtr, returnType, argTypes);
+            var result = f.apply(null, argsList);
+            // NativeFunction results could be native pointers, cast to string if needed
+            if (result !== null && result !== undefined && typeof result.toString === 'function') {
+                result = result.toString();
+            }
+            return { status: "success", result: result };
+        } catch(e) {
+            return { status: "error", error: e.toString() };
+        }
+    },
+
+    invokeExportedFunction: function(moduleName, exportName, returnType, argTypes, argsList) {
+        try {
+            var m = Process.findModuleByName(moduleName);
+            if (!m) return { status: "error", error: "Module not found" };
+            
+            var exp = null;
+            var exports = m.enumerateExports();
+            for (var i = 0; i < exports.length; i++) {
+                if (exports[i].name === exportName) {
+                    exp = exports[i];
+                    break;
+                }
+            }
+            if (!exp) return { status: "error", error: "Export not found" };
+            
+            var f = new NativeFunction(exp.address, returnType, argTypes);
+            var result = f.apply(null, argsList);
+            if (result !== null && result !== undefined && typeof result.toString === 'function') {
+                result = result.toString();
+            }
+            return { status: "success", result: result };
+        } catch (e) {
+            return { status: "error", error: e.toString() };
+        }
+    },
+
     getModuleInfo: function(name) {
         var m = Process.findModuleByName(name);
         if (m) {
             return {
                 base: m.base.toString(),
                 size: m.size,
+                name: m.name,
                 path: m.path
             };
         }
-        return null;
+        return { status: "error", error: "Module not found" };
+    },
+
+    dumpDex: function() {
+        var results = [];
+        Process.enumerateRanges('r--').forEach(function(range) {
+            try {
+                // "dex\n035\0" -> 64 65 78 0a 30 33 35 00
+                Memory.scanSync(range.base, range.size, "64 65 78 0a 30 33 35 00").forEach(function(match) {
+                    try {
+                        var dexSize = Memory.readU32(match.address.add(0x20));
+                        if (dexSize > 0 && dexSize < 100 * 1024 * 1024) { // Max 100MB sanity check
+                            results.push({
+                                address: match.address.toString(),
+                                size: dexSize
+                            });
+                        }
+                    } catch(e) {}
+                });
+            } catch (e) {}
+        });
+        return { status: "success", dexes: results };
     },
 
     enumerateModules: function() {

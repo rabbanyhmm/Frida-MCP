@@ -141,6 +141,38 @@ def suspend_process(pid: int, device_id: Optional[str] = None) -> Dict[str, Any]
         return {"status": "error", "message": f"Failed to pause process via ADB: {str(e)}"}
 
 
+def pull_file(remote_path: str, local_path: str) -> Dict[str, Any]:
+    """Pull a file from the target device to the host."""
+    import subprocess
+    adb_path = get_adb_path()
+    # Using su -c to copy to a readable temp location first might be needed if restricted,
+    # but let's try direct pull first.
+    cmd = [adb_path, "pull", remote_path, local_path]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if res.returncode == 0:
+            return {"status": "success", "message": "File pulled successfully.", "output": res.stdout}
+        else:
+            return {"status": "error", "message": f"ADB Pull failed: {res.stderr}"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+def push_file(local_path: str, remote_path: str) -> Dict[str, Any]:
+    """Push a file from the host to the target device."""
+    import subprocess
+    adb_path = get_adb_path()
+    cmd = [adb_path, "push", local_path, remote_path]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if res.returncode == 0:
+            return {"status": "success", "message": "File pushed successfully.", "output": res.stdout}
+        else:
+            return {"status": "error", "message": f"ADB Push failed: {res.stderr}"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 def resume_process_os(pid: int, device_id: Optional[str] = None) -> Dict[str, Any]:
     """Resumes target process execution via SIGCONT using ADB with Frida fallback."""
     import subprocess

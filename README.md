@@ -28,18 +28,25 @@ Frida MCP operates out-of-process via an RPC bridge to an injected V8 JavaScript
 - **Mass API Hooking**: Automatically hook all exports or imports of an entire module simultaneously to instantly profile application behavior.
 
 ### 4. Advanced Automation & Scripting
-- Embeds a JavaScript script runner and a bridged Lua VM for executing legacy Game Guardian scripts (`gg` namespace).
-- Exposes "Quick Operations" to minimize AI token usage (e.g., scanning and editing in one atomic MCP call).
+- **Native Execution**: Invoke dynamically exported APIs or arbitrary function addresses (`callNativeFunction`).
+- **Target File Access**: Directly pull or push files via ADB integration, and extract DEX files right out of memory.
+- **Embedded Script Runner**: Embeds a JavaScript script runner and a bridged Lua VM for executing legacy Game Guardian scripts (`gg` namespace).
+- **Session Hot-Reloading**: Seamlessly swap and inject updated instrumentation scripts on-the-fly without restarting the process.
+- **Quick Operations**: Minimize AI token usage by scanning and editing in one atomic MCP call.
+
+### 5. Execution State & Thread Analysis
+- **Thread Enumeration**: Analyze running thread states and CPU register contexts (`pc`, `sp`, `r0`-`r15`, etc.).
+- **Accurate Stack Backtraces**: Interrogate individual threads to extract live execution paths and stack traces, resolving to debug symbols where available.
 
 ---
 
 ## Future Roadmap
 
 The toolkit is continuously evolving. In the future, even more advanced reverse engineering capabilities will be added, including:
-- **Thread Control & Context Manipulation**: Pausing specific threads, reading CPU registers, and injecting hardware breakpoints.
-- **Advanced De-obfuscation**: Unpacking packed libraries and bypassing anti-debug techniques (e.g., anti-ptrace, seccomp).
+- **Advanced Context Manipulation**: Breakpoint injection, dynamic thread suspension, and register manipulation.
+- **Advanced De-obfuscation**: Unpacking heavily packed libraries and bypassing aggressive anti-debug techniques (e.g., anti-ptrace, seccomp, root detection).
 - **Network Traffic Tracing**: Native hooking for `recv`, `send`, and SSL/TLS crypto API interception.
-- **File System & JNI Tracing**: Automatically logging Android/Linux file operations and JNI boundary crossings.
+- **File System & JNI Tracing**: Automatically logging Android/Linux OS file operations and JNI boundary crossings.
 
 ---
 
