@@ -1,37 +1,53 @@
-# Dynamic Instrumenter & Memory Editor MCP Server
+# Frida MCP: Advanced Dynamic Reverse Engineering & Instrumentation
 
-A Model Context Protocol (MCP) server that exposes advanced dynamic binary instrumentation, dynamic memory editing, pointer scanning, and automated scripting capabilities (JavaScript & Lua) to AI Agents and IDEs. 
+A Model Context Protocol (MCP) server that exposes advanced dynamic binary instrumentation, dynamic memory editing, pointer scanning, module analysis, and automated scripting capabilities (JavaScript & Lua) directly to AI Agents and IDEs. 
 
-This server integrates seamlessly with advanced AI systems such as **Antigravity**, **Cursor**, **Windsurf**, and **Claude Desktop**, allowing them to interactively inspect processes, search memory spaces, freeze variables, and hot-patch code in real-time.
-
----
-
-## Capabilities
-
-- **Memory Editing & Values Search**:
-  - Scan target process memory for standard types: `byte`, `word`, `dword`, `qword`, `float`, `double`, `hex` patterns, and strings (`utf8` / `utf16`).
-  - XOR encrypted search support with masks.
-  - Scan region constraints: Anonymous maps, Stack, Heap, Dalvik, Code segments.
-  - Fuzzy Search: Refine relative scans (`exact`, `changed`, `unchanged`, `increased`, `decreased`, `greater`, `less`).
-- **Group & Nearby Scans**:
-  - Locate multiple values separated by distance thresholds (e.g. `100;50;99`).
-- **Pointer Scanning**:
-  - Walk pointer paths to identify reference patterns pointing to target values.
-- **Dynamic Variables Freezing**:
-  - Lock variables in memory by writing values repeatedly on a 100ms interval loop.
-- **Inline Binary Patching**:
-  - Hot-patch executable code instructions (like NOP-ing checks) in-memory using `Memory.patchCode()`.
-- **Script Run Engines**:
-  - Exposes an embedded JavaScript script runner containing a simulated Game Guardian `gg` global class.
-  - Supports executing standard Lua scripts on the host, bridged to the instrumentation agent.
+This server integrates seamlessly with advanced AI systems such as **Antigravity**, **Cursor**, **Windsurf**, and **Claude Desktop**, enabling them to autonomously act as a powerful Reverse Engineer. AI agents can interactively inspect processes, search memory spaces, hook and trace functions, traverse pointer chains, and hot-patch code in real-time.
 
 ---
 
-## Installation
+## Capabilities & Architecture
+
+Frida MCP operates out-of-process via an RPC bridge to an injected V8 JavaScript agent (`agent.js`), achieving native execution speed for memory scanning and instrumentation within the target process, while allowing high-level orchestration from the AI IDE.
+
+### 1. Memory & Process Hacking
+- **Memory Scanning & Filtering**: Fast scanning for `byte`, `word`, `dword`, `qword`, `float`, `double`, `hex` patterns, and strings. Supports XOR masks and region filters.
+- **Dynamic Variable Freezing**: Lock variables in memory by writing values repeatedly on an interval loop.
+- **Pointer Chain Traversal**: Automatically follow multi-level static offsets to dynamic heap structures.
+- **Page Allocation & Protection**: Allocate new memory buffers dynamically and change memory page protections (e.g., `rwx`) at runtime.
+
+### 2. Module & Symbol Analysis
+- **Module Enumeration**: List all loaded binaries, libraries (`.so`, `.dll`, `.dylib`), and executables.
+- **Exports & Imports Extraction**: Enumerate publicly exported API functions and imported dependencies for any loaded module.
+- **Symbol Resolution**: Retrieve internal symbol tables and automatically convert Absolute Virtual Addresses (VA) to Relative Virtual Addresses (RVA) and vice versa, assisting in static analysis mapping.
+
+### 3. Function Interception & Tracing
+- **Function Hooking & Overrides**: Intercept calls to any memory address using `Interceptor.attach`, log arguments, and optionally overwrite the return value.
+- **Inline Binary Patching**: Hot-patch machine code instructions in-memory (e.g., inserting `NOP`s).
+- **Call Tree Tracing**: Track function execution depths and backtraces to understand complex game or application logic.
+- **Mass API Hooking**: Automatically hook all exports or imports of an entire module simultaneously to instantly profile application behavior.
+
+### 4. Advanced Automation & Scripting
+- Embeds a JavaScript script runner and a bridged Lua VM for executing legacy Game Guardian scripts (`gg` namespace).
+- Exposes "Quick Operations" to minimize AI token usage (e.g., scanning and editing in one atomic MCP call).
+
+---
+
+## Future Roadmap
+
+The toolkit is continuously evolving. In the future, even more advanced reverse engineering capabilities will be added, including:
+- **Thread Control & Context Manipulation**: Pausing specific threads, reading CPU registers, and injecting hardware breakpoints.
+- **Advanced De-obfuscation**: Unpacking packed libraries and bypassing anti-debug techniques (e.g., anti-ptrace, seccomp).
+- **Network Traffic Tracing**: Native hooking for `recv`, `send`, and SSL/TLS crypto API interception.
+- **File System & JNI Tracing**: Automatically logging Android/Linux file operations and JNI boundary crossings.
+
+---
+
+## Installation & Setup
 
 ### Prerequisites
 - Python 3.8 or later
-- Target device must have `frida-server` running (or local process debugging enabled)
+- Target device must have `frida-server` running (or local process debugging enabled via USB/ADB)
 
 ### Setup
 Install the package in editable mode:
@@ -85,70 +101,5 @@ Add the following to your configuration file (Windows: `%APPDATA%\Claude\claude_
       "command": "frida-mcp"
     }
   }
-}
-```
-
----
-
-## Exposed MCP Tools
-
-### Process Control
-- `list_devices`: View connected USB/local/remote devices.
-- `list_processes`: Enumerate running processes.
-- `locate_process`: Find process PIDs matching a search name.
-- `spawn_program` / `resume_process` / `terminate_process`: Process lifecycle tools.
-
-### Memory & Search
-- `open_session`: Attach to a process and inject the instrumentation engine.
-- `list_sessions`: View all open memory sessions (browser tab manager).
-- `close_session`: Detach and clean up.
-- `mem_search`: Initial memory scan by type.
-- `mem_refine`: Filter scan list by value changes.
-- `mem_pointer_search`: Find pointer addresses pointing to search targets.
-- `mem_group_search`: Search for multiple values close to one another.
-- `mem_get_candidates`: Retrieve values of matching addresses.
-- `mem_write` / `mem_write_all`: Write values to single or all candidate results.
-- `mem_freeze` / `mem_unfreeze`: Lock/unlock variables at specific addresses.
-- `mem_patch_code`: Patch binary opcodes at runtime.
-- `mem_dump_range`: Extract raw memory ranges as bytes.
-- `mem_find_translated_library`: Locate base address of translated ARM libraries in memory maps (such as Houdini translation environments).
-- `mem_dump_metadata`: Pull decrypted global-metadata.dat directly from target app cache directories to host path.
-
-
-### Quick Operations (Token Reduction)
-- `mem_quick_search_and_edit`: Search for a value and edit all occurrences in a single invocation.
-- `mem_quick_patch_offsets`: Apply multiple binary instruction patches simultaneously in a single call.
-- `mem_quick_freeze_list`: Freeze a list of multiple memory addresses in a single call.
-
-
-### Persistent Offsets (Saved List)
-- `saved_list_load`: Load saved offset database.
-- `saved_list_add`: Save name, address, and type to local persistent config.
-- `saved_list_remove`: Remove address from database.
-
-### Custom Automation Scripts
-- `execute_js_script`: Run JavaScript scripts (with global `gg` environment).
-- `execute_lua_script`: Run Lua automation scripts.
-
----
-
-## Scripting Environment Helpers
-
-Scripts have access to the simulated `gg` scripting object:
-- `gg.searchNumber(value, type, regions, xorKey)`
-- `gg.refineNumber(value, mode)`
-- `gg.getResults(limit)`
-- `gg.editAll(value, type)`
-- `gg.setValues(items)`
-- `gg.freeze(address, value, type)`
-- `gg.unfreeze(address)`
-
-### Example Script (JS)
-```javascript
-// Search for variable value
-var count = gg.searchNumber(100, "dword");
-if (count > 0) {
-    // Modify matches
-    gg.editAll(9999, "dword");
 }
 ```

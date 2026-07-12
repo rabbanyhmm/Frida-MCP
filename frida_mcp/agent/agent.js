@@ -6,6 +6,8 @@ var candidateValues = {};  // Address -> Previous value (string representation)
 var searchType = "dword";
 var frozenAddresses = {};
 var freezeIntervalId = null;
+var hookLogs = [];          // Hook event queue
+var installedHooks = {};    // Address -> Interceptor listener
 
 // Convert integer to hex string helper
 function u32ToHex(val) {
@@ -182,26 +184,94 @@ function startFreezeLoop() {
     }, 100); // 100ms lock rate
 }
 
-// Enumerate memory ranges filtered by regions (Anonymous, Heap, Stack, Code)
 function getFilteredRanges(regions) {
-    var allRanges = Process.enumerateRanges({ protection: "rw-", coalesce: true });
+    var allRanges = Process.enumerateRanges({ protection: "r--", coalesce: false });
     if (!regions || regions.length === 0) return allRanges;
 
     return allRanges.filter(function(range) {
         var name = range.file ? range.file.path.toLowerCase() : "";
         
+        // Skip native libraries to avoid translation page-fault crashes
+        if (name.indexOf(".so") !== -1) return false;
+        
+        // Skip common translation runtime segments (Houdini/NDK translation buffers)
+        if (name.indexOf("houdini") !== -1 || name.indexOf("dalvik") !== -1 || name.indexOf("/dev/ashmem") !== -1) return false;
+
+        // Skip execute-only, JIT cache pages, and system library maps
+        if (range.protection.indexOf("x") !== -1) return false;
+
+        // Always include metadata file maps
+        if (name.indexOf("global-metadata.dat") !== -1 || name.indexOf(".dat") !== -1) return true;
+
         // Match GG Regions
-        if (regions.indexOf("anon") !== -1 && !range.file) return true;
+        if (regions.indexOf("anon") !== -1 && !range.file) {
+            // Under simulation contexts, only permit anonymous segments if they are associated with metadata structure lookups
+            if (name.indexOf("global-metadata.dat") !== -1 || name.indexOf(".dat") !== -1 || range.size == 55738368) return true;
+            return false; // Restrict random anonymous scans completely to prevent crashes
+        }
         if (regions.indexOf("stack") !== -1 && name.indexOf("[stack]") !== -1) return true;
-        if (regions.indexOf("heap") !== -1 && (name.indexOf("[heap]") !== -1 || name.indexOf("dalvik") !== -1)) return true;
-        if (regions.indexOf("code") !== -1 && range.file && (name.indexOf(".so") !== -1 || name.indexOf(".apk") !== -1 || name.indexOf(".jar") !== -1)) return true;
+        if (regions.indexOf("heap") !== -1 && name.indexOf("[heap]") !== -1) return true;
+        if (regions.indexOf("code") !== -1 && range.file && (name.indexOf(".apk") !== -1 || name.indexOf(".jar") !== -1)) return true;
         
         return false;
     });
 }
 
+function isRangeReadable(base, size) {
+    try {
+        var pageSize = 4096;
+        for (var offset = 0; offset < size; offset += pageSize) {
+            base.add(offset).readU8();
+        }
+        if (size > 0) {
+            base.add(size - 1).readU8();
+        }
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
 // RPC exports defining the full memory search agent api
 rpc.exports = {
+    allocateMemory: function(size) {
+        try {
+            var ptrAddr = Memory.alloc(size);
+            if (typeof global.allocatedMemory === 'undefined') {
+                global.allocatedMemory = [];
+            }
+            global.allocatedMemory.push(ptrAddr);
+            return ptrAddr.toString();
+        } catch (e) {
+            return "ERROR: " + e.toString();
+        }
+    },
+
+    protectMemory: function(addrStr, size, protection) {
+        try {
+            Memory.protect(ptr(addrStr), size, protection);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    },
+
+    traversePointerChain: function(baseAddrStr, offsetsList) {
+        var result = [baseAddrStr];
+        try {
+            var currentPtr = ptr(baseAddrStr);
+            for (var i = 0; i < offsetsList.length; i++) {
+                var offsetStr = offsetsList[i];
+                var offset = (typeof offsetStr === "string" && offsetStr.startsWith("0x")) ? parseInt(offsetStr, 16) : parseInt(offsetStr, 10);
+                currentPtr = currentPtr.add(offset).readPointer();
+                result.push(currentPtr.toString());
+            }
+            return { status: "success", chain: result };
+        } catch (e) {
+            return { status: "error", error: e.toString(), chain: result };
+        }
+    },
+
     // 1. Initial Memory search supporting encryption, types, and wildcards
     searchValue: function(valStr, type, regions, xorKey) {
         candidates = [];
@@ -213,18 +283,22 @@ rpc.exports = {
         var ranges = getFilteredRanges(regions);
         ranges.forEach(function(range) {
             try {
-                Memory.scan(range.base, range.size, pattern, {
-                    onMatch: function(address, size) {
-                        candidates.push(address.toString());
-                        candidateValues[address.toString()] = valStr;
-                    },
-                    onError: function(reason) {},
-                    onComplete: function() {}
+                var base = range.base;
+                var size = range.size;
+                if (size <= 0 || base.isNull()) return;
+
+                if (!isRangeReadable(base, size)) {
+                    return; // Skip ranges containing uncommitted/protected guard pages (common on translation/JIT buffers)
+                }
+
+                var matches = Memory.scanSync(base, size, pattern);
+                matches.forEach(function(match) {
+                    candidates.push(match.address.toString());
+                    candidateValues[match.address.toString()] = valStr;
                 });
             } catch (e) {}
         });
 
-        Thread.sleep(0.1); // Yield to let Async scan collect
         return candidates.length;
     },
 
@@ -322,17 +396,12 @@ rpc.exports = {
 
         ranges.forEach(function(range) {
             try {
-                Memory.scan(range.base, range.size, pattern, {
-                    onMatch: function(address, size) {
-                        matches.push(address);
-                    },
-                    onError: function() {},
-                    onComplete: function() {}
+                var matches = Memory.scanSync(range.base, range.size, pattern);
+                matches.forEach(function(match) {
+                    matches.push(match.address);
                 });
             } catch (e) {}
         });
-
-        Thread.sleep(0.1);
 
         // Verify group matches
         matches.forEach(function(addr) {
@@ -369,19 +438,18 @@ rpc.exports = {
     // 5. Native Opcode patching / Code editing
     patchOpcode: function(addressStr, assemblyInstruction) {
         var targetAddr = ptr(addressStr);
-        // On ARM, Thumb instructions must align properly
-        Memory.patchCode(targetAddr, 4, function(code) {
-            var writer = new ArmWriter(code);
-            // Example NOP patch helper
-            if (assemblyInstruction.toLowerCase() === "nop") {
+        if (assemblyInstruction.toLowerCase() === "nop") {
+            Memory.patchCode(targetAddr, 4, function(code) {
+                var writer = new ArmWriter(code);
                 writer.putNop();
-            } else {
-                // Otherwise write hex equivalent of instruction if provided directly
-                var bytes = valToBytes(assemblyInstruction, "hex");
-                code.writeByteArray(Array.prototype.slice.call(bytes));
-            }
-            writer.flush();
-        });
+                writer.flush();
+            });
+        } else {
+            // Write hex bytes directly using Memory.protect for ultimate stealth and stability
+            var bytes = valToBytes(assemblyInstruction, "hex");
+            Memory.protect(targetAddr, bytes.length, 'rwx');
+            targetAddr.writeByteArray(Array.prototype.slice.call(bytes));
+        }
         return true;
     },
 
@@ -444,13 +512,113 @@ rpc.exports = {
     dumpMemoryRange: function(startStr, size) {
         var start = ptr(startStr);
         try {
-            var bytes = start.readByteArray(size);
-            // Returns binary data as base64 or array of values
-            return Array.prototype.slice.call(new Uint8Array(bytes));
+            return start.readByteArray(size);
         } catch (e) {
             throw new Error("Failed to read memory range: " + e.toString());
         }
     },
+
+    getRangesList: function(pattern) {
+        var results = [];
+        try {
+            var file = new File("/proc/self/maps", "r");
+            var line;
+            var pat = pattern ? pattern.toLowerCase() : null;
+            while ((line = file.readLine()) !== null) {
+                var parts = line.trim().split(/\s+/);
+                if (parts.length < 2) continue;
+                
+                var addrRange = parts[0].split("-");
+                var perm = parts[1];
+                var name = parts.slice(5).join(" ") || "";
+                
+                if (perm.indexOf("r") === -1) continue;
+
+                if (pat) {
+                    var nLower = name.toLowerCase();
+                    if (pat.indexOf("*") !== -1) {
+                        var suffix = pat.replace(/\*/g, "");
+                        if (nLower.indexOf(suffix) === -1) continue;
+                    } else {
+                        if (nLower.indexOf(pat) === -1) continue;
+                    }
+                }
+
+                results.push({
+                    start: "0x" + addrRange[0],
+                    end: "0x" + addrRange[1],
+                    internalName: name
+                });
+            }
+            file.close();
+        } catch(e) {
+            var allRanges = Process.enumerateRanges({ protection: 'r--', coalesce: false });
+            allRanges.forEach(function(range) {
+                var name = range.file ? range.file.path : "";
+                if (pattern) {
+                    var pat = pattern.toLowerCase();
+                    var nLower = name.toLowerCase();
+                    if (pat.indexOf("*") !== -1) {
+                        var suffix = pat.replace(/\*/g, "");
+                        if (nLower.indexOf(suffix) === -1) return;
+                    } else {
+                        if (nLower.indexOf(pat) === -1) return;
+                    }
+                }
+                results.push({
+                    start: range.base.toString(),
+                    end: range.base.add(range.size).toString(),
+                    internalName: name
+                });
+            });
+        }
+        return results;
+    },
+
+    getTargetInfo: function() {
+        var mainModName = "unknown";
+        try {
+            mainModName = Process.mainModule ? Process.mainModule.name : "unknown";
+        } catch(e) {}
+        return {
+            packageName: mainModName,
+            label: mainModName,
+            x64: Process.pointerSize === 8
+        };
+    },
+
+    getValuesList: function(items) {
+        var results = [];
+        items.forEach(function(item) {
+            var addr = item.address;
+            var flag = item.flags;
+            // Map GG flags to types: TYPE_BYTE = 1, TYPE_WORD = 2, TYPE_DWORD = 4, TYPE_QWORD = 64, TYPE_FLOAT = 16, TYPE_DOUBLE = 32
+            var type = "dword";
+            if (flag === 1) type = "byte";
+            else if (flag === 2) type = "word";
+            else if (flag === 4) type = "dword";
+            else if (flag === 64) type = "qword";
+            else if (flag === 16) type = "float";
+            else if (flag === 32) type = "double";
+            
+            var val = readAddress(addr, type);
+            var parsedVal = 0;
+            if (val !== null) {
+                if (type === "float" || type === "double") {
+                    parsedVal = parseFloat(val);
+                } else {
+                    parsedVal = parseInt(val, 10);
+                }
+            }
+            results.push({
+                address: addr,
+                value: parsedVal,
+                flags: flag
+            });
+        });
+        return results;
+    },
+
 
     // Game Guardian JS Script runner engine context
     executeScriptJs: function(jsCode) {
@@ -464,17 +632,13 @@ rpc.exports = {
                 var ranges = getFilteredRanges(regions);
                 ranges.forEach(function(r) {
                     try {
-                        Memory.scan(r.base, r.size, pattern, {
-                            onMatch: function(address) {
-                                candidates.push(address.toString());
-                                candidateValues[address.toString()] = val.toString();
-                            },
-                            onError: function() {},
-                            onComplete: function() {}
+                        var matches = Memory.scanSync(r.base, r.size, pattern);
+                        matches.forEach(function(match) {
+                            candidates.push(match.address.toString());
+                            candidateValues[match.address.toString()] = val.toString();
                         });
                     } catch (e) {}
                 });
-                Thread.sleep(0.1);
                 return candidates.length;
             },
             refineNumber: function(val, mode) {
@@ -530,5 +694,275 @@ rpc.exports = {
                 stack: e.stack
             };
         }
+    },
+
+    registerHook: function(addressStr, valType, overrideValStr) {
+        var targetAddr = ptr(addressStr);
+        var addrKey = targetAddr.toString();
+
+        if (installedHooks[addrKey]) {
+            installedHooks[addrKey].detach();
+            delete installedHooks[addrKey];
+        }
+
+        try {
+            var listener = Interceptor.attach(targetAddr, {
+                onEnter: function(args) {
+                    this.argValues = [];
+                    for (var i = 0; i < 8; i++) {
+                        try {
+                            this.argValues.push(args[i].toString());
+                        } catch (e) {
+                            this.argValues.push("error");
+                        }
+                    }
+                    if (valType && valType.startsWith("set_arg")) {
+                        var argIndex = parseInt(valType.substring(7), 10);
+                        if (!isNaN(argIndex)) {
+                            var overridePtr = ptr(overrideValStr === "true" || overrideValStr === "1" ? 1 : (overrideValStr === "false" || overrideValStr === "0" ? 0 : overrideValStr));
+                            args[argIndex] = overridePtr;
+                        }
+                    }
+                },
+                onLeave: function(retval) {
+                    var origRet = retval.toString();
+                    var overridden = false;
+                    
+                    if (valType && !valType.startsWith("set_arg") && overrideValStr !== undefined && overrideValStr !== null && overrideValStr !== "") {
+                        if (valType === "boolean" || valType === "bool") {
+                            var boolVal = (overrideValStr.toLowerCase() === "true" || overrideValStr === "1");
+                            retval.replace(ptr(boolVal ? 1 : 0));
+                            overridden = true;
+                        } else if (valType === "int" || valType === "dword" || valType === "u32") {
+                            retval.replace(ptr(parseInt(overrideValStr, 10)));
+                            overridden = true;
+                        } else if (valType === "qword" || valType === "u64") {
+                            retval.replace(ptr(overrideValStr));
+                            overridden = true;
+                        } else {
+                            try {
+                                retval.replace(ptr(overrideValStr));
+                                overridden = true;
+                            } catch(err) {}
+                        }
+                    }
+
+                    if (hookLogs.length >= 100) {
+                        hookLogs.shift();
+                    }
+                    hookLogs.push({
+                        timestamp: new Date().toISOString(),
+                        address: addrKey,
+                        args: this.argValues.slice(0, 4), // preserve compact logging format
+                        original_retval: origRet,
+                        overridden_retval: overridden ? overrideValStr : null
+                    });
+                }
+            });
+            installedHooks[addrKey] = listener;
+            return true;
+        } catch (e) {
+            throw new Error("Failed to attach Interceptor at " + addressStr + ": " + e.toString());
+        }
+    },
+
+    getHookLogs: function() {
+        var logs = hookLogs;
+        hookLogs = [];
+        return logs;
+    },
+
+    unhookFunction: function(addressStr) {
+        if (installedHooks[addressStr]) {
+            installedHooks[addressStr].detach();
+            delete installedHooks[addressStr];
+            return true;
+        }
+        return false;
+    },
+
+    traceCallTree: function(addressStr, depth) {
+        var targetPtr = ptr(addressStr);
+        var logs = [];
+        var indent = "";
+        
+        try {
+            Interceptor.attach(targetPtr, {
+                onEnter: function(args) {
+                    var currentDepth = this.depth || 0;
+                    if (currentDepth > depth) return;
+                    
+                    logs.push({
+                        type: "enter",
+                        address: addressStr,
+                        depth: currentDepth,
+                        tid: this.threadId
+                    });
+                    
+                    this.depth = currentDepth + 1;
+                },
+                onLeave: function(retval) {
+                    if (this.depth !== undefined) {
+                        this.depth--;
+                        logs.push({
+                            type: "leave",
+                            address: addressStr,
+                            depth: this.depth,
+                            tid: this.threadId
+                        });
+                    }
+                }
+            });
+            return { status: "success", message: "Call tree tracer attached" };
+        } catch(e) {
+            return { status: "error", error: e.toString() };
+        }
+    },
+
+    hookModuleExports: function(moduleName) {
+        var m = Process.findModuleByName(moduleName);
+        if (!m) return { status: "error", error: "Module not found" };
+        
+        var count = 0;
+        m.enumerateExports().forEach(function(exp) {
+            if (exp.type === "function") {
+                try {
+                    Interceptor.attach(exp.address, {
+                        onEnter: function(args) {
+                            if (hookLogs.length < 500) {
+                                hookLogs.push({
+                                    type: "export_call",
+                                    module: moduleName,
+                                    name: exp.name,
+                                    address: exp.address.toString()
+                                });
+                            }
+                        }
+                    });
+                    count++;
+                } catch(e) {}
+            }
+        });
+        return { status: "success", hooked: count };
+    },
+
+    hookModuleImports: function(moduleName) {
+        var m = Process.findModuleByName(moduleName);
+        if (!m) return { status: "error", error: "Module not found" };
+        
+        var count = 0;
+        m.enumerateImports().forEach(function(imp) {
+            if (imp.type === "function" && imp.address) {
+                try {
+                    Interceptor.attach(imp.address, {
+                        onEnter: function(args) {
+                            if (hookLogs.length < 500) {
+                                hookLogs.push({
+                                    type: "import_call",
+                                    module: moduleName,
+                                    name: imp.name,
+                                    address: imp.address.toString()
+                                });
+                            }
+                        }
+                    });
+                    count++;
+                } catch(e) {}
+            }
+        });
+        return { status: "success", hooked: count };
+    },
+
+    getModuleInfo: function(name) {
+        var m = Process.findModuleByName(name);
+        if (m) {
+            return {
+                base: m.base.toString(),
+                size: m.size,
+                path: m.path
+            };
+        }
+        return null;
+    },
+
+    enumerateModules: function() {
+        return Process.enumerateModules().map(function(m) {
+            return { name: m.name, base: m.base.toString(), size: m.size, path: m.path };
+        });
+    },
+
+    getModuleExports: function(name) {
+        var m = Process.findModuleByName(name);
+        if (!m) return [];
+        return m.enumerateExports().map(function(e) {
+            return { type: e.type, name: e.name, address: e.address.toString() };
+        });
+    },
+
+    getModuleImports: function(name) {
+        var m = Process.findModuleByName(name);
+        if (!m) return [];
+        return m.enumerateImports().map(function(i) {
+            return { type: i.type, name: i.name, module: i.module, address: i.address ? i.address.toString() : null };
+        });
+    },
+
+    getModuleSymbols: function(name) {
+        var m = Process.findModuleByName(name);
+        if (!m) return [];
+        return m.enumerateSymbols().map(function(s) {
+            return { isGlobal: s.isGlobal, type: s.type, name: s.name, address: s.address.toString(), size: s.size };
+        });
+    },
+
+    vaToRva: function(name, vaStr) {
+        var m = Process.findModuleByName(name);
+        if (!m) return { error: "Module not found" };
+        try {
+            var va = ptr(vaStr);
+            var base = m.base;
+            if (va.compare(base) < 0 || va.compare(base.add(m.size)) >= 0) {
+                return { error: "Address not inside module bounds" };
+            }
+            var rva = va.sub(base);
+            return { status: "success", rva: "0x" + rva.toString(16) };
+        } catch (e) {
+            return { error: e.toString() };
+        }
+    },
+
+    quickHookOffsets: function(offsets, valType, overrideValStr, baseAddrStr) {
+        var is32Bit = (Process.pointerSize === 4);
+        var hookedCount = 0;
+
+        // Python resolves the base address via ADB - no JS-side maps reading
+        if (!baseAddrStr) {
+            return 'ERROR: base address not provided - library may not be loaded yet';
+        }
+
+        var base = ptr(baseAddrStr);
+        var overrideInt = (valType === 'boolean' || valType === 'bool')
+            ? (overrideValStr === 'true' || overrideValStr === '1' ? 1 : 0)
+            : null;
+
+        offsets.forEach(function(offsetStr) {
+            try {
+                var offset = parseInt(offsetStr, 16);
+                var addr = base.add(offset);
+                if (is32Bit) addr = addr.add(1);
+                Interceptor.attach(addr, {
+                    onLeave: function(retval) {
+                        if (overrideInt !== null) {
+                            retval.replace(ptr(overrideInt));
+                        } else {
+                            try { retval.replace(ptr(overrideValStr)); } catch(e) {}
+                        }
+                    }
+                });
+                hookedCount++;
+            } catch(e) {}
+        });
+
+        return 'hooked ' + hookedCount + '/' + offsets.length + ' offsets @ base=' + baseAddrStr;
     }
 };

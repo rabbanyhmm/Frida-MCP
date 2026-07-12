@@ -27,6 +27,14 @@ def list_processes(
 
 
 @mcp.tool()
+def list_applications(
+    device_id: Optional[str] = Field(default=None, description="Optional ID of the device. Uses USB device if not specified.")
+) -> List[Dict[str, Any]]:
+    """List all installed applications on the selected device (useful for Android/iOS)."""
+    return device.enumerate_applications(device_id)
+
+
+@mcp.tool()
 def locate_process(
     name: str = Field(description="Sub-string of the process name to match (case-insensitive)."),
     device_id: Optional[str] = Field(default=None, description="Optional ID of the device. Uses USB device if not specified.")
@@ -54,10 +62,33 @@ def resume_process(
     pid: int = Field(description="Process ID to resume."),
     device_id: Optional[str] = Field(default=None, description="Optional ID of the device. Uses USB device if not specified.")
 ) -> Dict[str, Any]:
-    """Resume execution of a spawned or suspended process."""
+    """Resume execution of a paused or suspended process using OS-level signal controls."""
     try:
-        device.resume_process(pid, device_id)
-        return {"pid": pid, "success": True}
+        return device.resume_process_os(pid, device_id)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+def pause_process(
+    pid: int = Field(description="Process ID to pause/suspend."),
+    device_id: Optional[str] = Field(default=None, description="Optional ID of the device. Uses USB device if not specified.")
+) -> Dict[str, Any]:
+    """Pause/Suspend target process execution using OS-level STOP signal controls."""
+    try:
+        return device.suspend_process(pid, device_id)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+def process_status_details(
+    pid: int = Field(description="Process ID to inspect."),
+    device_id: Optional[str] = Field(default=None, description="Optional ID of the device. Uses USB device if not specified.")
+) -> Dict[str, Any]:
+    """Retrieve detailed state metrics, thread count, virtual size, RSS footprint, and parent PID details for a target process."""
+    try:
+        return device.get_process_status(pid, device_id)
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -112,6 +143,17 @@ def close_session(
     try:
         memory.close_memory_session(session_id)
         return {"status": "success", "session_id": session_id, "message": "Session closed."}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def check_session_status(
+    session_id: str = Field(description="Session ID to check health and status.")
+) -> Dict[str, Any]:
+    """Check the health status of an active session to verify if it is still connected or if the target process crashed."""
+    try:
+        return memory.check_session(session_id)
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -255,6 +297,47 @@ def mem_get_frozen(
 
 
 @mcp.tool()
+def mem_allocate(
+    session_id: str = Field(description="Active session ID."),
+    size: int = Field(description="Size in bytes to allocate.")
+) -> Dict[str, Any]:
+    """Allocate memory in the target process."""
+    try:
+        addr = memory.allocate_memory(session_id, size)
+        return {"status": "success", "address": addr}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_protect(
+    session_id: str = Field(description="Active session ID."),
+    address: str = Field(description="Hex memory address to protect."),
+    size: int = Field(description="Size of region to protect."),
+    protection: str = Field(description="Protection string (e.g. 'rw-', 'rwx').")
+) -> Dict[str, Any]:
+    """Change memory page protections."""
+    try:
+        success = memory.protect_memory(session_id, address, size, protection)
+        return {"status": "success", "address": address, "protected": success}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_pointer_chain(
+    session_id: str = Field(description="Active session ID."),
+    base_address: str = Field(description="Base hex address."),
+    offsets: List[str] = Field(description="List of hex or decimal offsets.")
+) -> Dict[str, Any]:
+    """Traverse a multi-level pointer chain."""
+    try:
+        return memory.traverse_pointer_chain(session_id, base_address, offsets)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
 def mem_patch_code(
     session_id: str = Field(description="Active session ID."),
     address: str = Field(description="Hex instruction address to patch (e.g., '0x7ff7a100')."),
@@ -278,6 +361,38 @@ def mem_dump_range(
     try:
         byte_list = memory.dump_memory_range(session_id, start_address, size)
         return {"status": "success", "size": len(byte_list), "bytes": byte_list}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_dump_hex(
+    session_id: str = Field(description="Active session ID."),
+    address: str = Field(description="Hex memory address or RVA offset (e.g. '0x4F23E58')."),
+    size: int = Field(default=8, description="Number of bytes to dump."),
+    library_name: Optional[str] = Field(default=None, description="If provided, 'address' is treated as an offset (RVA) from this library's base address (e.g. 'libil2cpp.so').")
+) -> Dict[str, Any]:
+    """Dump memory from a target address or library offset and return it as a formatted hex string."""
+    try:
+        # Resolve address if library_name is provided
+        target_addr = address
+        if library_name:
+            resolved = memory.resolve_rva_address(session_id, address, library_name)
+            if resolved.get("status") == "error":
+                return resolved
+            target_addr = resolved["absolute_address"]
+
+        byte_list = memory.dump_memory_range(session_id, target_addr, size)
+        
+        # Format as hex string
+        hex_str = " ".join([f"{b:02x}" for b in byte_list])
+        
+        return {
+            "status": "success", 
+            "address": target_addr,
+            "size": len(byte_list), 
+            "hex": hex_str
+        }
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -364,13 +479,34 @@ def mem_quick_search_and_edit(
 @mcp.tool()
 def mem_quick_patch_offsets(
     session_id: str = Field(description="Active session ID."),
-    patches: List[Dict[str, str]] = Field(description="List of patch objects, each containing 'address' and 'instruction' (e.g. 'nop' or hex string).")
+    patches: List[Dict[str, str]] = Field(description="List of patch objects, each containing 'address' and 'instruction' (e.g. 'nop' or hex string)."),
+    library_name: str = Field(default="libil2cpp.so", description="Optional base library name to offset RVAs. Default is libil2cpp.so.")
 ) -> Dict[str, Any]:
-    """Apply multiple binary code/instruction patches simultaneously in a single call to save AI tokens."""
+    """Patch multiple code addresses (OPCODEs/hex) in a single call.
+    Automatically resolves library base address and adds it to RVA offsets if they look like relative offsets.
+    """
     try:
-        return memory.quick_patch_addresses(session_id, patches)
+        pid = int(session_id.split("_")[1])
+        base_addr = memory._get_lib_base_via_adb(pid, library_name)
+        if not base_addr:
+            return {"status": "error", "message": f"Could not resolve base address for {library_name}"}
+        
+        base_int = int(base_addr, 16)
+        
+        resolved_patches = []
+        for p in patches:
+            addr_str = p.get("address", "")
+            offset = int(addr_str, 16)
+            # If the offset is relatively small, it's an RVA. Add base.
+            if offset < 0x10000000:
+                abs_addr = hex(base_int + offset)
+            else:
+                abs_addr = hex(offset)
+            resolved_patches.append({"address": abs_addr, "instruction": p.get("instruction")})
+            
+        return memory.quick_patch_addresses(session_id, resolved_patches)
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "message": str(e)}
 
 
 @mcp.tool()
@@ -381,6 +517,70 @@ def mem_quick_freeze_list(
     """Freeze multiple memory addresses simultaneously in a single call to save AI tokens."""
     try:
         return memory.quick_freeze_addresses(session_id, freeze_list)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_enumerate_modules(
+    session_id: str = Field(description="Active session ID.")
+) -> Dict[str, Any]:
+    """Enumerate all loaded modules/libraries in the process."""
+    try:
+        modules = memory.enumerate_modules(session_id)
+        return {"status": "success", "modules": modules}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_get_exports(
+    session_id: str = Field(description="Active session ID."),
+    module_name: str = Field(description="Name of the module (e.g. 'libil2cpp.so').")
+) -> Dict[str, Any]:
+    """Retrieve exports from a specific module."""
+    try:
+        exports = memory.get_module_exports(session_id, module_name)
+        return {"status": "success", "exports": exports}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_get_imports(
+    session_id: str = Field(description="Active session ID."),
+    module_name: str = Field(description="Name of the module.")
+) -> Dict[str, Any]:
+    """Retrieve imports for a specific module."""
+    try:
+        imports = memory.get_module_imports(session_id, module_name)
+        return {"status": "success", "imports": imports}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_get_symbols(
+    session_id: str = Field(description="Active session ID."),
+    module_name: str = Field(description="Name of the module.")
+) -> Dict[str, Any]:
+    """Retrieve symbols for a specific module."""
+    try:
+        symbols = memory.get_module_symbols(session_id, module_name)
+        return {"status": "success", "symbols": symbols}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_va_to_rva(
+    session_id: str = Field(description="Active session ID."),
+    module_name: str = Field(description="Name of the module."),
+    va: str = Field(description="Absolute Virtual Address (VA) in hex.")
+) -> Dict[str, Any]:
+    """Convert an absolute virtual address (VA) to a relative virtual address (RVA) for a given module."""
+    try:
+        return memory.va_to_rva(session_id, module_name, va)
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -398,13 +598,129 @@ def mem_find_translated_library(
 
 
 @mcp.tool()
-def mem_dump_metadata(
+def mem_dump_library(
     session_id: str = Field(description="Active session ID."),
-    output_path: str = Field(description="Host path to copy global-metadata.dat output file (e.g., 'C:\\Users\\mdrab\\Desktop\\global-metadata.dat').")
+    library_name: str = Field(description="Shared library module name (e.g. 'libil2cpp.so')."),
+    output_path: str = Field(description="Workspace destination filepath on the host filesystem (e.g. 'c:\\Users\\mdrab\\Desktop\\libil2cpp.bin').")
 ) -> Dict[str, Any]:
-    """Pull decrypted global-metadata.dat directly from target application cache directories onto the host file system."""
+    """Dynamically parses and dumps fully decrypted shared libraries from memory maps to host workspace."""
     try:
-        return memory.dump_metadata_file(session_id, output_path)
+        return memory.dump_library_memory(session_id, library_name, output_path)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_dump_metadata_search(
+    session_id: str = Field(description="Active session ID."),
+    output_path: str = Field(description="Workspace destination metadata filepath on the host filesystem (e.g. 'c:\\Users\\mdrab\\Desktop\\global-metadata.dat').")
+) -> Dict[str, Any]:
+    """Runs a safe signature sweep for global-metadata magic bytes and dumps decrypted metadata to the host."""
+    try:
+        return memory.dump_metadata_by_signature(session_id, output_path)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_resolve_rva(
+    session_id: str = Field(description="Active session ID."),
+    rva: str = Field(description="Relative Virtual Address from dump file (e.g., '0x1D6E334' or '1D6E334')."),
+    library_name: str = Field(default="libil2cpp.so", description="Library module name (defaults to 'libil2cpp.so').")
+) -> Dict[str, Any]:
+    """Resolves an RVA (Relative Virtual Address) offset from a dump file to a live absolute process memory address at runtime."""
+    try:
+        return memory.resolve_rva_address(session_id, rva, library_name)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_hook_function(
+    session_id: str = Field(description="Active session ID."),
+    address: str = Field(description="Hex memory address to hook (e.g. '0x994f1334')."),
+    val_type: Optional[str] = Field(default=None, description="Optional return value override type ('boolean', 'int', 'qword')."),
+    override_val: Optional[str] = Field(default=None, description="Optional value to override return value (e.g., 'true', '1').")
+) -> Dict[str, Any]:
+    """Dynamically hooks/intercepts target function calls using Frida Interceptor, recording arguments and optional return values."""
+    try:
+        return memory.hook_function(session_id, address, val_type, override_val)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_get_hook_logs(
+    session_id: str = Field(description="Active session ID.")
+) -> Dict[str, Any]:
+    """Retrieve logged intercept events from any active function hooks in this session."""
+    try:
+        return memory.get_hook_logs(session_id)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_quick_hook_offsets(
+    session_id: str = Field(description="Active session ID."),
+    offsets: List[str] = Field(description="List of Relative Virtual Address offsets (hex strings, e.g. ['0x4F23E58', '0x50AB1F0']) to hook."),
+    val_type: str = Field(default="boolean", description="Data type of the return value to override ('boolean', 'int', 'qword')."),
+    override_val: str = Field(default="true", description="Value to override the return value with (e.g. 'true', '1', '0')."),
+    library_name: str = Field(default="libil2cpp.so", description="Shared library name (defaults to 'libil2cpp.so').")
+) -> Dict[str, Any]:
+    """Stealthily hooks multiple function offsets simultaneously in a target module to override their return values, with automatic linker load handling."""
+    try:
+        return memory.quick_hook_offsets(session_id, offsets, val_type, override_val, library_name)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_unhook_function(
+    session_id: str = Field(description="Active session ID."),
+    address: str = Field(description="Hex memory address to unhook.")
+) -> Dict[str, Any]:
+    """Detach/remove a previously installed hook from a function."""
+    try:
+        success = memory.unhook_function(session_id, address)
+        return {"status": "success", "address": address, "unhooked": success}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_trace_call_tree(
+    session_id: str = Field(description="Active session ID."),
+    address: str = Field(description="Hex memory address to start tracing."),
+    depth: int = Field(default=3, description="Maximum call depth to trace.")
+) -> Dict[str, Any]:
+    """Attach a tracer to trace call depth (enter/leave events)."""
+    try:
+        return memory.trace_call_tree(session_id, address, depth)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_hook_exports(
+    session_id: str = Field(description="Active session ID."),
+    module_name: str = Field(description="Name of the module to hook exports in.")
+) -> Dict[str, Any]:
+    """Hook all exported functions in a module to log when they are called."""
+    try:
+        return memory.hook_module_exports(session_id, module_name)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def mem_hook_imports(
+    session_id: str = Field(description="Active session ID."),
+    module_name: str = Field(description="Name of the module to hook imports in.")
+) -> Dict[str, Any]:
+    """Hook all imported functions in a module to log when they are called."""
+    try:
+        return memory.hook_module_imports(session_id, module_name)
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
